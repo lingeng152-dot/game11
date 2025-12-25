@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Maze Pro: 技能觉醒</title>
+    
+    <link rel="icon" href="logo.png" type="image/png">
+    <link rel="apple-touch-icon" href="logo.png">
+
+    <style>
+        :root { --main-color: #00ff88; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'PingFang SC', 'Helvetica Neue', sans-serif; color: white; }
+        
+        /* 状态栏 */
+        #stats { position: absolute; top: 40px; left: 20px; font-size: 16px; z-index: 10; color: var(--main-color); font-weight: bold; text-shadow: 0 0 10px rgba(0,255,136,0.5); }
+        
+        /* 覆盖层菜单 */
+        #overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.92); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; transition: 0.5s; }
+        .menu-card { background: #111; border: 2px solid var(--main-color); padding: 30px; border-radius: 25px; text-align: center; width: 85%; max-width: 400px; box-shadow: 0 0 30px rgba(0,255,136,0.2); }
+        
+        /* 按钮样式 */
+        .btn { background: var(--main-color); color: #000; border: none; padding: 15px 30px; border-radius: 30px; font-weight: bold; margin: 10px 0; cursor: pointer; width: 100%; font-size: 18px; transition: 0.3s; }
+        .btn:active { transform: scale(0.95); opacity: 0.8; }
+        .btn-secondary { background: #333; color: #fff; margin-top: 5px; font-size: 14px; }
+
+        /* 商店区域 */
+        .shop-container { display: flex; justify-content: space-around; gap: 10px; margin: 20px 0; }
+        .skin-btn { border: 2px solid #333; padding: 12px 5px; border-radius: 15px; font-size: 11px; width: 80px; cursor: pointer; transition: 0.3s; }
+        .active-skin { border-color: var(--main-color); background: rgba(0,255,136,0.15); box-shadow: 0 0 15px var(--main-color); }
+        
+        #skill-desc { font-size: 13px; color: var(--main-color); height: 20px; margin-bottom: 10px; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="stats">LVL: <span id="lvl">1</span> | 💰: <span id="coins">0</span></div>
+
+    <div id="overlay">
+        <div class="menu-card">
+            <h1 style="margin-top:0; letter-spacing: 2px;">MAZE PRO</h1>
+            <p style="font-size: 14px; color: #888;">最高纪录：Level <span id="best-lvl">1</span></p >
+            
+            <div class="shop-container">
+                <div class="skin-btn active-skin" id="skin-def" onclick="selectSkin('#00ff88', 'Default', 0)">🟢<br>基础型</div>
+                <div class="skin-btn" id="skin-lava" onclick="selectSkin('#ff4500', 'Lava', 10)">🔥<br>熔岩</div>
+                <div class="skin-btn" id="skin-ice" onclick="selectSkin('#00d4ff', 'Ice', 20)">❄️<br>冰晶</div>
+            </div>
+            <div id="skill-desc">技能: 平衡性能</div>
+
+            <button class="btn" onclick="initGame()">开始神经链接</button>
+            <button class="btn btn-secondary" onclick="generatePoster()">生成战绩海报</button>
+            <p style="font-size: 10px; color: #444; margin-top: 15px;" onclick="localStorage.clear(); location.reload();">重置数据</p >
+        </div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let state = {
+            active: false,
+            score: 0,
+            level: parseInt(localStorage.getItem('maze_lvl')) || 1,
+            coins: parseInt(localStorage.getItem('maze_coins')) || 0,
+            skin: '#00ff88',
+            skinType: 'Default'
+        };
+
+        let player = { x: 50, y: 50, r: 15, vx: 0, vy: 0 };
+        let walls = [], items = [], trail = [];
+
+        // 初始化显示
+        document.getElementById('lvl').innerText = state.level;
+        document.getElementById('best-lvl').innerText = state.level;
+        document.getElementById('coins').innerText = state.coins;
+
+        function selectSkin(color, type, price) {
+            if (state.coins < price) {
+                alert("金币不足！需要 " + price + " 金币");
+                return;
+            }
+            state.skin = color;
+            state.skinType = type;
+            document.querySelectorAll('.skin-btn').forEach(b => b.classList.remove('active-skin'));
+            event.currentTarget.classList.add('active-skin');
+            
+            const descs = {
+                'Default': '技能: 平衡性能 (全地形适配)',
+                'Lava': '技能: 【粉碎者】有概率撞碎障碍物',
+                'Ice': '技能: 【时空停滞】墙壁速度降低70%'
+            };
+            document.getElementById('skill-desc').innerText = descs[type];
+            document.documentElement.style.setProperty('--main-color', color);
+        }
+
+        function createLevel() {
+            walls = []; items = []; trail = [];
+            document.getElementById('lvl').innerText = state.level;
+            document.getElementById('coins').innerText = state.coins;
+            
+            const wallCount = Math.min(state.level + 2, 10);
+            for(let i=0; i<wallCount; i++) {
+                let speedScale = (state.skinType === 'Ice') ? 0.3 : 1;
+                walls.push({
+                    x: Math.random() * (canvas.width - 100),
+                    y: Math.random() * (canvas.height - 100),
+                    w: Math.random() > 0.5 ? 130 : 25,
+                    h: Math.random() > 0.5 ? 25 : 130,
+                    m: (Math.random() - 0.5) * (state.level * 0.9) * speedScale,
+                    originX: 0
+                });
+            }
+            spawnItem('target', '#ffd700');
+            for(let i=0; i<Math.floor(state.level/2)+1; i++) {
+                spawnItem('enemy', '#ff0055');
+            }
+        }
+
+        function spawnItem(type, color) {
+            items.push({ type, color, x: Math.random()*(canvas.width-40)+20, y: Math.random()*(canvas.height-40)+20, r: 12 });
+        }
+
+        function loop() {
+            if(!state.active) return;
+            ctx.fillStyle = 'rgba(0,0,0,0.15)';
+            ctx.fillRect(0,0,canvas.width,canvas.height);
+
+            player.vx *= 0.95; player.vy *= 0.95;
+            player.x += player.vx; player.y += player.vy;
+
+            // 绘制拖尾
+            trail.push({x: player.x, y: player.y});
+            if(trail.length > 8) trail.shift();
+            trail.forEach((t, i) => {
+                ctx.fillStyle = state.skin; ctx.globalAlpha = i/15;
+                ctx.beginPath(); ctx.arc(t.x, t.y, player.r * (i/8), 0, Math.PI*2); ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            // 墙壁逻辑
+            walls.forEach((w, index) => {
+                w.x += w.m;
+                if(w.x < 0 || w.x > canvas.width - w.w) w.m *= -1;
+
+                if (player.x+player.r > w.x && player.x-player.r < w.x+w.w && player.y+player.r > w.y && player.y-player.r < w.y+w.h) {
+                    if (state.skinType === 'Lava' && Math.random() > 0.75) {
+                        walls.splice(index, 1);
+                        if(window.navigator.vibrate) window.navigator.vibrate([30, 10, 30]);
+                    } else {
+                        player.vx *= -1.2; player.vy *= -1.2;
+                        if(window.navigator.vibrate) window.navigator.vibrate(20);
+                    }
+                }
+                ctx.fillStyle = '#1a1a1a'; ctx.fillRect(w.x, w.y, w.w, w.h);
+                ctx.strokeStyle = state.skin; ctx.lineWidth = 2; ctx.strokeRect(w.x, w.y, w.w, w.h);
+            });
+
+            // 物品交互
+            items.forEach((it, i) => {
+                if(Math.hypot(player.x-it.x, player.y-it.y) < player.r + it.r) {
+                    if(it.type === 'target') {
+                        state.score++; state.coins += 2;
+                        items.splice(i, 1);
+                        if(state.score >= 3) { 
+                            state.level++; state.score = 0; 
+                            localStorage.setItem('maze_lvl', state.level); 
+                            localStorage.setItem('maze_coins', state.coins);
+                            createLevel(); 
+                        }
+                        else { spawnItem('target', '#ffd700'); }
+                    } else {
+                        state.active = false; alert("核心链路断开！"); location.reload();
+                    }
+                }
+                ctx.shadowBlur = 15; ctx.shadowColor = it.color; ctx.fillStyle = it.color;
+                ctx.beginPath(); ctx.arc(it.x, it.y, it.r, 0, Math.PI*2); ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+
+            // 边界检查
+            player.x = Math.max(player.r, Math.min(canvas.width-player.r, player.x));
+            player.y = Math.max(player.r, Math.min(canvas.height-player.r, player.y));
+
+            // 画玩家
+            ctx.fillStyle = '#fff'; ctx.shadowBlur = 20; ctx.shadowColor = state.skin;
+            ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, Math.PI*2); ctx.fill();
+            ctx.shadowBlur = 0;
+
+            requestAnimationFrame(loop);
+        }
+
+        function generatePoster() {
+            const pCanvas = document.createElement('canvas');
+            const pCtx = pCanvas.getContext('2d');
+            pCanvas.width = 400; pCanvas.height = 600;
+            const grad = pCtx.createLinearGradient(0,0,0,600);
+            grad.addColorStop(0, '#0a0a0a'); grad.addColorStop(1, '#000');
+            pCtx.fillStyle = grad; pCtx.fillRect(0,0,400,600);
+            pCtx.strokeStyle = state.skin; pCtx.lineWidth = 8; pCtx.strokeRect(15,15,370,570);
+            
+            pCtx.fillStyle = '#fff'; pCtx.textAlign = 'center';
+            pCtx.font = 'bold 28px Arial'; pCtx.fillText('MAZE PRO 战绩报告', 200, 80);
+            pCtx.font = '20px Arial'; pCtx.fillStyle = state.skin;
+            pCtx.fillText(state.level > 5 ? '【 空间主宰 】' : '【 迷宫新兵 】', 200, 130);
+            
+            pCtx.fillStyle = '#fff'; pCtx.font = '120px Arial'; pCtx.fillText(state.level, 200, 310);
+            pCtx.font = '20px Arial'; pCtx.fillText('CURRENT LEVEL', 200, 350);
+            pCtx.font = '24px Arial'; pCtx.fillText('💰 总资产: ' + state.coins, 200, 420);
+            
+            pCtx.shadowBlur = 25; pCtx.shadowColor = state.skin; pCtx.fillStyle = state.skin;
+            pCtx.beginPath(); pCtx.arc(200, 500, 30, 0, Math.PI*2); pCtx.fill();
+            
+            const url = pCanvas.toDataURL();
+            const w = window.open("");
+            w.document.write(`<body style="background:#000;color:#fff;text-align:center;margin:0;padding:20px;"><p>长按保存海报分享</p >< img src="${url}" style="width:100%;max-width:400px;border:1px solid #fff;box-shadow:0 0 20px ${state.skin};"><br><button onclick="window.close()" style="margin-top:20px;padding:10px 20px;background:${state.skin};border:none;border-radius:5px;">关闭预览</button></body>`);
+        }
+
+        function initGame() {
+            canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission().then(res => { if(res==='granted') start(); });
+            } else { start(); }
+        }
+
+        function start() {
+            document.getElementById('overlay').style.opacity = '0';
+            setTimeout(() => document.getElementById('overlay').style.display = 'none', 500);
+            state.active = true;
+            window.addEventListener('deviceorientation', e => {
+                player.vx += e.gamma * 0.22; player.vy += e.beta * 0.22;
+            });
+            createLevel();
+            loop();
+        }
+    </script>
+</body>
+</html>
